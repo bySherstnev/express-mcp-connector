@@ -1,0 +1,40 @@
+{
+  "name": "express-mcp-connector",
+  "version": "0.1.0",
+  "description": "A local MCP connector for an independently paired eXpress user device",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "auth:qr": "tsx src/cli/qr-login.ts",
+    "auth:logout": "tsx src/cli/logout.ts",
+    "auth:repair": "tsx src/cli/rts-bootstrap.ts",
+    "auth:cts-retry": "tsx src/cli/cts-retry.ts",
+    "auth:cts-email-start": "tsx src/cli/cts-email-start.ts",
+    "auth:cts-email-confirm": "tsx src/cli/cts-email-confirm.ts",
+    "auth:doctor": "tsx src/cli/cts-registration-doctor.ts",
+    "send:reconcile": "tsx src/cli/send-reconcile.ts",
+    "build": "tsc",
+    "dev": "tsx watch src/mcp/server.ts",
+    "start": "node dist/mcp/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@napi-rs/keyring": "^2.0.0",
+    "libsodium-wrappers-sumo": "^0.8.4",
+    "qrcode": "^1.5.4",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/libsodium-wrappers-sumo": "^0.7.8",
+    "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.6",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.3"
+  }
+}
