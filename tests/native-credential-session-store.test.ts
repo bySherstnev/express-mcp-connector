@@ -28,10 +28,19 @@ const SESSION: StandaloneExpressSession = {
 };
 
 describe("NativeCredentialSessionStore", () => {
-  function memoryCredentials(initial: Record<string, string> = {}) {
+  function memoryCredentials(
+    initial: Record<string, string> = {},
+    maximumPasswordBytes?: number,
+  ) {
     const values = new Map(Object.entries(initial));
     const credentials: NativeCredentialClient = {
       setPassword: vi.fn(async (_service, account, password) => {
+        if (
+          maximumPasswordBytes !== undefined &&
+          Buffer.byteLength(password, "utf16le") > maximumPasswordBytes
+        ) {
+          throw new Error("Credential blob exceeds the platform limit");
+        }
         values.set(account, password);
       }),
       getPassword: vi.fn(async (_service, account) => values.get(account) ?? null),
@@ -44,7 +53,11 @@ describe("NativeCredentialSessionStore", () => {
   }
 
   it("chunks a large session below the Windows Credential Manager limit", async () => {
-    const { credentials, values } = memoryCredentials();
+    const windowsCredentialBlobLimit = 2_560;
+    const { credentials, values } = memoryCredentials(
+      {},
+      windowsCredentialBlobLimit,
+    );
     const store = new NativeCredentialSessionStore(credentials);
     const largeSession: StandaloneExpressSession = {
       ...SESSION,
@@ -57,8 +70,12 @@ describe("NativeCredentialSessionStore", () => {
       /^session\.v2\.[0-9a-f-]{36}\.\d+$/i.test(account),
     );
     expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks.every(([, value]) => Buffer.byteLength(value, "utf8") <= 1_800))
-      .toBe(true);
+    expect(
+      chunks.every(
+        ([, value]) =>
+          Buffer.byteLength(value, "utf16le") <= windowsCredentialBlobLimit,
+      ),
+    ).toBe(true);
     expect(values.has("session.v2")).toBe(true);
     expect(values.has("session.v1")).toBe(false);
     await expect(store.load()).resolves.toEqual(largeSession);

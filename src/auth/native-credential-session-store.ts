@@ -12,9 +12,10 @@ const LEGACY_ACCOUNT = "session.v1";
 const MANIFEST_ACCOUNT = "session.v2";
 const SESSION_LOCK_SCOPE = `${APPLICATION_STORAGE_ID} standalone session store`;
 const sessionLockContext = new AsyncLocalStorage<boolean>();
-// Windows CRED_MAX_CREDENTIAL_BLOB_SIZE is 2560 bytes. Base64 is ASCII, so
-// 1800 characters leaves ample room below that operating-system limit.
-const CREDENTIAL_CHUNK_CHARACTERS = 1_800;
+// Windows Credential Manager stores passwords as UTF-16 and limits the
+// credential blob to 2560 bytes. Base64 is ASCII, so 1200 characters occupy
+// 2400 bytes and leave a small margin for backend-specific behavior.
+const CREDENTIAL_CHUNK_CHARACTERS = 1_200;
 const MAX_CHUNKS = 128;
 
 interface SessionManifest {
