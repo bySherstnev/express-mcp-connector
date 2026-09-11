@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,6 +17,7 @@ import {
   serializeQrPayload,
 } from "../auth/standalone-qr-registration.js";
 import { withConnectorLifecycleLock } from "../mcp/connector-lifecycle-lock.js";
+import { removeTemporaryQrDirectory } from "./temporary-qr-cleanup.js";
 
 function readRtsHost(argv: readonly string[]): string {
   const index = argv.indexOf("--rts-host");
@@ -104,7 +105,7 @@ async function main(): Promise<void> {
     );
   } finally {
     if (qrDirectory) {
-      await rm(qrDirectory, { recursive: true, force: true });
+      await removeTemporaryQrDirectory(qrDirectory);
     }
   }
 }
