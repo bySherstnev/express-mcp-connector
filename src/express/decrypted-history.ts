@@ -17,6 +17,7 @@ import {
   isSupportedEventAlgorithm,
   isSupportedKdcKeyAlgorithm,
 } from "./protocol-capabilities.js";
+import { fetchExpressUserProfiles } from "./user-profile-client.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -26,11 +27,11 @@ export interface DecryptedHistoryMessage {
   insertedAt: string | null;
   messageId: string | null;
   senderId: string | null;
+  senderName: string | null;
   kind: string | null;
   body: string | null;
   replyToMessageId: string | null;
   attachmentFileId: string | null;
-  senderClaimMismatch: boolean;
   status:
     | "decrypted"
     | "deleted"
@@ -56,6 +57,7 @@ export interface DecryptedHistoryDependencies {
   fetchHistoryPage?: typeof fetchHistoryPage;
   fetchKdcPublicKeys?: typeof fetchKdcPublicKeys;
   fetchEventInfo?: typeof fetchEventInfo;
+  fetchUserProfiles?: typeof fetchExpressUserProfiles;
 }
 
 function asRecord(value: unknown): JsonRecord | null {
@@ -73,7 +75,6 @@ function optionalString(record: JsonRecord | null, field: string): string | null
 function normalizePlaintextMessage(
   event: JsonRecord,
   plaintext: unknown,
-  senderKey: ExpressPublicKey,
   expectedGroupChatId: string,
 ): DecryptedHistoryMessage | null {
   const decoded = asRecord(plaintext);
@@ -93,14 +94,16 @@ function normalizePlaintextMessage(
     insertedAt:
       optionalString(event, "inserted_at") ?? optionalString(decoded, "timestamp"),
     messageId: optionalString(decoded, "msg_id"),
-    senderId: senderKey.userHuid,
+    // `from` is part of the successfully authenticated encrypted payload. The
+    // KDC key owner is a transport identity and can be shared by messages from
+    // multiple users in corporate history, so it must not be used as author.
+    senderId: claimedSenderId,
+    senderName: null,
     kind: optionalString(decoded, "type"),
     body: optionalString(decoded, "body"),
     replyToMessageId:
       optionalString(reply, "msg_id") ?? optionalString(decoded, "reply"),
     attachmentFileId: optionalString(decoded, "link_file_id"),
-    senderClaimMismatch:
-      claimedSenderId !== null && claimedSenderId !== senderKey.userHuid,
     status: "decrypted",
   };
 }
@@ -119,7 +122,6 @@ function findContinuationSyncId(events: readonly JsonRecord[]): string | null {
 function unavailableMessage(
   event: JsonRecord,
   status: Exclude<DecryptedHistoryMessage["status"], "decrypted">,
-  senderId: string | null = null,
 ): DecryptedHistoryMessage | null {
   const syncId = optionalString(event, "sync_id");
   if (!syncId) {
@@ -130,12 +132,12 @@ function unavailableMessage(
     eventType: optionalString(event, "event_type") ?? "unknown",
     insertedAt: optionalString(event, "inserted_at"),
     messageId: null,
-    senderId,
+    senderId: null,
+    senderName: null,
     kind: null,
     body: null,
     replyToMessageId: null,
     attachmentFileId: null,
-    senderClaimMismatch: false,
     status,
   };
 }
@@ -196,7 +198,6 @@ export async function decryptHistoryEvents(
         const deleted = unavailableMessage(
           event,
           "deleted",
-          senderKey?.userHuid ?? null,
         );
         if (deleted) {
           messages.push(deleted);
@@ -219,7 +220,6 @@ export async function decryptHistoryEvents(
         const unsupported = unavailableMessage(
           event,
           "unsupported_algorithm",
-          senderKey.userHuid,
         );
         if (unsupported) {
           messages.push(unsupported);
@@ -231,7 +231,6 @@ export async function decryptHistoryEvents(
         const malformed = unavailableMessage(
           event,
           "malformed",
-          senderKey.userHuid,
         );
         if (malformed) {
           messages.push(malformed);
@@ -255,7 +254,6 @@ export async function decryptHistoryEvents(
         const message = normalizePlaintextMessage(
           event,
           plaintext,
-          senderKey,
           chat.groupChatId,
         );
         if (message) {
@@ -264,7 +262,6 @@ export async function decryptHistoryEvents(
           const malformed = unavailableMessage(
             event,
             "malformed",
-            senderKey.userHuid,
           );
           if (malformed) {
             messages.push(malformed);
@@ -275,7 +272,6 @@ export async function decryptHistoryEvents(
         const failed = unavailableMessage(
           event,
           "authentication_failed",
-          senderKey.userHuid,
         );
         if (failed) {
           messages.push(failed);
@@ -378,6 +374,35 @@ export async function readDecryptedHistory(
           { signal: input.signal, connection: chat.connection },
         );
   const result = await decryptHistoryEvents(session, chat, page, keys);
+  const senderIds = [
+    ...new Set(
+      result.messages
+        .filter((message) => message.status === "decrypted")
+        .map((message) => message.senderId)
+        .filter((value): value is string => value !== null),
+    ),
+  ];
+  if (senderIds.length > 0) {
+    try {
+      const profiles = await (
+        dependencies.fetchUserProfiles ?? fetchExpressUserProfiles
+      )(session, senderIds, {
+        signal: input.signal,
+        connection: chat.connection,
+      });
+      for (const message of result.messages) {
+        if (message.senderId) {
+          message.senderName = profiles.get(message.senderId)?.name ?? null;
+        }
+      }
+    } catch (error) {
+      if (input.signal?.aborted) {
+        throw error;
+      }
+      // History remains useful when the directory is temporarily unavailable.
+      // Null is explicit and callers must never infer or invent a sender name.
+    }
+  }
   result.anchorExcluded = !includeCurrentAnchor;
   result.anchorUnavailable = anchorUnavailable;
   return result;

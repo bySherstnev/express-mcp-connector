@@ -151,7 +151,10 @@ codex mcp add express --env EXPRESS_ENABLE_SEND=1 -- $node $server
 
 - `express_status` — проверяет готовность локальной сессии;
 - `express_list_chats` — ищет и перечисляет доступные чаты;
-- `express_get_history` — читает одну страницу истории, до 100 событий;
+- `express_get_history` — читает одну страницу истории, до 100 событий; для
+  расшифрованных сообщений возвращает `senderId` из защищённого payload и
+  `senderName` из справочника eXpress. Если имя не найдено, `senderName` равен
+  `null` — придумывать или угадывать имя по другим полям нельзя;
 - `express_send_message` — отправляет текст после явного подтверждения.
 
 Для старых страниц истории клиент использует курсор `nextBeforeSyncId`,

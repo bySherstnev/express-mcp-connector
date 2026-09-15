@@ -7,6 +7,7 @@ const EXPECTED_EVENT = {
   type: "message_new",
   body: "SYNTHETIC_TEST_MESSAGE_ONLY",
   group_chat_id: GROUP_CHAT_ID,
+  from: "synthetic-author",
   sender: {
     displayName: "Synthetic Fixture User",
   },

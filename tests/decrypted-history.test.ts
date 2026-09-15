@@ -1,9 +1,12 @@
 import sodium from "libsodium-wrappers-sumo";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { StandaloneExpressSession } from "../src/auth/standalone-qr-client.js";
 import type { DeviceChat } from "../src/express/device-chat-list.js";
-import { decryptHistoryEvents } from "../src/express/decrypted-history.js";
+import {
+  decryptHistoryEvents,
+  readDecryptedHistory,
+} from "../src/express/decrypted-history.js";
 import type { ExpressPublicKey } from "../src/express/kdc-public-keys.js";
 import { createSyntheticLibsodiumEventFixture } from "./fixtures/synthetic-libsodium-event.js";
 
@@ -105,12 +108,12 @@ describe("decrypted history normalization", () => {
         eventType: "message_new",
         insertedAt: "2026-09-06T12:00:00.000Z",
         messageId: null,
-        senderId: "synthetic-sender",
+        senderId: "synthetic-author",
+        senderName: null,
         kind: "message_new",
         body: "SYNTHETIC_TEST_MESSAGE_ONLY",
         replyToMessageId: null,
         attachmentFileId: null,
-        senderClaimMismatch: false,
         status: "decrypted",
       },
       {
@@ -118,12 +121,12 @@ describe("decrypted history normalization", () => {
         eventType: "message_new",
         insertedAt: "2026-09-06T11:59:00.000Z",
         messageId: null,
-        senderId: "synthetic-sender",
+        senderId: null,
+        senderName: null,
         kind: null,
         body: null,
         replyToMessageId: null,
         attachmentFileId: null,
-        senderClaimMismatch: false,
         status: "deleted",
       },
     ]);
@@ -132,10 +135,11 @@ describe("decrypted history normalization", () => {
     expect(result.unavailableCount).toBe(0);
   });
 
-  it("uses the KDC-bound sender identity and flags a conflicting plaintext claim", async () => {
-    const fixture = await createSyntheticLibsodiumEventFixture({
-      from: "claimed-other-user",
-    });
+  it("keeps multiple payload authors that share one KDC transport key", async () => {
+    const [fixture, secondFixture] = await Promise.all([
+      createSyntheticLibsodiumEventFixture({ from: "first-author" }),
+      createSyntheticLibsodiumEventFixture({ from: "second-author" }),
+    ]);
     await sodium.ready;
     const session = {
       version: 1,
@@ -204,14 +208,219 @@ describe("decrypted history normalization", () => {
             },
             payload: fixture.encryptedPayload,
           },
+          {
+            event_type: "message_new",
+            group_chat_id: secondFixture.groupChatId,
+            sync_id: secondFixture.syncId,
+            sender_key_id: key.id,
+            key: {
+              key: secondFixture.encryptedEnvelope,
+              algo: "xsalsa20:xchacha20_aead_ietf",
+            },
+            payload: secondFixture.encryptedPayload,
+          },
         ],
       },
       new Map([[key.id, key]]),
     );
 
+    expect(result.messages.map(({ senderId, senderName }) => ({
+      senderId,
+      senderName,
+    }))).toEqual([
+      { senderId: "first-author", senderName: null },
+      { senderId: "second-author", senderName: null },
+    ]);
+  });
+
+  it("resolves the authenticated payload author through the selected directory", async () => {
+    const fixture = await createSyntheticLibsodiumEventFixture({
+      from: "corporate-author",
+    });
+    await sodium.ready;
+    const session = {
+      version: 1,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      rts: {
+        host: "synthetic.invalid",
+        authToken: "SYNTHETIC_TOKEN",
+        expiresAt: null,
+        userHuid: "recipient-user",
+        serverId: "synthetic-server",
+      },
+      cts: {
+        host: "cts.synthetic.invalid",
+        accessToken: "SYNTHETIC_CTS_TOKEN",
+        refreshToken: null,
+        expiresIn: 3600,
+        expiresAt: null,
+        userHuid: "recipient-user",
+        serverId: "synthetic-cts-server",
+        active: true,
+      },
+      device: {
+        udid: "synthetic-udid",
+        registrationId: "synthetic-registration",
+        signingKeyId: "synthetic-signing-id",
+        signingAlgorithm: "ed25519",
+        signingPublicKey: "SYNTHETIC_SIGNING_PUBLIC",
+        signingPrivateKey: "SYNTHETIC_SIGNING_PRIVATE",
+      },
+      encryptionKeys: {
+        cts_priv_key_body: sodium.to_base64(
+          fixture.recipientPrivateKey,
+          sodium.base64_variants.ORIGINAL,
+        ),
+      },
+    } satisfies StandaloneExpressSession;
+    const chat: DeviceChat = {
+      connection: "cts",
+      groupChatId: fixture.groupChatId,
+      name: "Synthetic chat",
+      chatType: "group_chat",
+      encryptionKeyIds: [],
+      encryptionAlgorithm: null,
+      active: true,
+      left: false,
+      sharedHistory: true,
+      lastEventSyncId: fixture.syncId,
+      lastEventInsertedAt: null,
+      lastIgnoreMessagesAt: null,
+    };
+    const key: ExpressPublicKey = {
+      id: "shared-transport-key",
+      body: sodium.to_base64(
+        fixture.senderPublicKey,
+        sodium.base64_variants.ORIGINAL,
+      ),
+      kind: "curve25519",
+      algo: "xsalsa20:xchacha20_aead_ietf",
+      userHuid: "transport-key-owner",
+    };
+    const fetchUserProfiles = vi.fn().mockResolvedValue(
+      new Map([
+        [
+          "corporate-author",
+          { userHuid: "corporate-author", name: "Corporate Author" },
+        ],
+      ]),
+    );
+
+    const result = await readDecryptedHistory(
+      session,
+      chat,
+      { limit: 10, beforeSyncId: "newer-page-anchor" },
+      {
+        fetchHistoryPage: vi.fn().mockResolvedValue({
+          generatedAt: null,
+          events: [
+            {
+              event_type: "message_new",
+              group_chat_id: fixture.groupChatId,
+              sync_id: fixture.syncId,
+              sender_key_id: key.id,
+              key: { key: fixture.encryptedEnvelope, algo: key.algo },
+              payload: fixture.encryptedPayload,
+            },
+          ],
+        }),
+        fetchKdcPublicKeys: vi.fn().mockResolvedValue(new Map([[key.id, key]])),
+        fetchUserProfiles,
+      },
+    );
+
     expect(result.messages[0]).toMatchObject({
-      senderId: "verified-kdc-user",
-      senderClaimMismatch: true,
+      senderId: "corporate-author",
+      senderName: "Corporate Author",
+    });
+    expect(fetchUserProfiles).toHaveBeenCalledWith(
+      session,
+      ["corporate-author"],
+      expect.objectContaining({ connection: "cts" }),
+    );
+  });
+
+  it("keeps the HUID and a null name when directory resolution fails", async () => {
+    const fixture = await createSyntheticLibsodiumEventFixture({
+      from: "unresolved-author",
+    });
+    await sodium.ready;
+    const session = {
+      version: 1,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      rts: {
+        host: "synthetic.invalid",
+        authToken: "SYNTHETIC_TOKEN",
+        expiresAt: null,
+        userHuid: "recipient-user",
+        serverId: "synthetic-server",
+      },
+      device: {
+        udid: "synthetic-udid",
+        registrationId: "synthetic-registration",
+        signingKeyId: "synthetic-signing-id",
+        signingAlgorithm: "ed25519",
+        signingPublicKey: "SYNTHETIC_SIGNING_PUBLIC",
+        signingPrivateKey: "SYNTHETIC_SIGNING_PRIVATE",
+      },
+      encryptionKeys: {
+        rts_priv_key_body: sodium.to_base64(
+          fixture.recipientPrivateKey,
+          sodium.base64_variants.ORIGINAL,
+        ),
+      },
+    } satisfies StandaloneExpressSession;
+    const chat: DeviceChat = {
+      connection: "rts",
+      groupChatId: fixture.groupChatId,
+      name: "Synthetic chat",
+      chatType: "group_chat",
+      encryptionKeyIds: [],
+      encryptionAlgorithm: null,
+      active: true,
+      left: false,
+      sharedHistory: true,
+      lastEventSyncId: fixture.syncId,
+      lastEventInsertedAt: null,
+      lastIgnoreMessagesAt: null,
+    };
+    const key: ExpressPublicKey = {
+      id: "shared-transport-key",
+      body: sodium.to_base64(
+        fixture.senderPublicKey,
+        sodium.base64_variants.ORIGINAL,
+      ),
+      kind: "curve25519",
+      algo: "xsalsa20:xchacha20_aead_ietf",
+      userHuid: "transport-key-owner",
+    };
+
+    const result = await readDecryptedHistory(
+      session,
+      chat,
+      { limit: 10, beforeSyncId: "newer-page-anchor" },
+      {
+        fetchHistoryPage: vi.fn().mockResolvedValue({
+          generatedAt: null,
+          events: [
+            {
+              event_type: "message_new",
+              group_chat_id: fixture.groupChatId,
+              sync_id: fixture.syncId,
+              sender_key_id: key.id,
+              key: { key: fixture.encryptedEnvelope, algo: key.algo },
+              payload: fixture.encryptedPayload,
+            },
+          ],
+        }),
+        fetchKdcPublicKeys: vi.fn().mockResolvedValue(new Map([[key.id, key]])),
+        fetchUserProfiles: vi.fn().mockRejectedValue(new Error("offline")),
+      },
+    );
+
+    expect(result.messages[0]).toMatchObject({
+      senderId: "unresolved-author",
+      senderName: null,
     });
   });
 

@@ -7,6 +7,7 @@ describe("ConnectorPolicyGuard", () => {
     "chats.discover",
     "history.read",
     "keys.read",
+    "profiles.resolve",
     "message.send",
   ] as const)("allows the explicitly scoped operation %s", (operation) => {
     const guard = new ConnectorPolicyGuard();

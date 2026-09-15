@@ -333,7 +333,7 @@ export function createExpressMcpServer(
     {
       title: "Read eXpress chat history",
       description:
-        "Read and locally decrypt one backward page from a chat visible to the authenticated user. Use nextBeforeSyncId to request older pages.",
+        "Read and locally decrypt one backward page from a chat visible to the authenticated user. Decrypted messages include senderId from the authenticated payload and senderName from the eXpress directory. A null senderName is unresolved and must never be inferred or invented. Use nextBeforeSyncId to request older pages.",
       inputSchema: z.object({
         chatId: z.string().trim().min(1).max(300),
         limit: z.number().int().min(1).max(100).default(50),
@@ -348,6 +348,7 @@ export function createExpressMcpServer(
         policy.assertAllowed("chats.discover");
         policy.assertAllowed("history.read");
         policy.assertAllowed("keys.read");
+        policy.assertAllowed("profiles.resolve");
         const session = await loadScopedSession(scope, signal);
         const chatList = await fetchChats(session, {
           timeoutMs: 20_000,

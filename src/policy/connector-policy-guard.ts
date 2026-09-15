@@ -2,6 +2,7 @@ const ALLOWED_OPERATIONS = new Set([
   "chats.discover",
   "history.read",
   "keys.read",
+  "profiles.resolve",
   "message.send",
 ] as const);
 
@@ -9,6 +10,7 @@ export type ConnectorOperation =
   | "chats.discover"
   | "history.read"
   | "keys.read"
+  | "profiles.resolve"
   | "message.send";
 
 /** Enforces the MCP connector's fail-closed capability boundary. */
