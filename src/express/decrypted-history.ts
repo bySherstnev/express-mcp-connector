@@ -21,6 +21,17 @@ import { fetchExpressUserProfiles } from "./user-profile-client.js";
 
 type JsonRecord = Record<string, unknown>;
 
+export interface DecryptedForwardSource {
+  hidden: boolean;
+  senderId: string | null;
+  senderName: string | null;
+  connection: "rts" | "cts" | null;
+  chatId: string | null;
+  chatName: string | null;
+  messageSyncId: string | null;
+  insertedAt: string | null;
+}
+
 export interface DecryptedHistoryMessage {
   syncId: string;
   eventType: string;
@@ -32,6 +43,7 @@ export interface DecryptedHistoryMessage {
   body: string | null;
   replyToMessageId: string | null;
   attachmentFileId: string | null;
+  forwardedFrom: DecryptedForwardSource | null;
   status:
     | "decrypted"
     | "deleted"
@@ -72,6 +84,37 @@ function optionalString(record: JsonRecord | null, field: string): string | null
     : null;
 }
 
+function normalizeForwardSource(decoded: JsonRecord): DecryptedForwardSource | null {
+  const forward = asRecord(decoded.forward);
+  if (!forward) {
+    return null;
+  }
+  const hidden = forward.stealth === true || decoded.stealth_forwarding === true;
+  if (hidden) {
+    return {
+      hidden: true,
+      senderId: null,
+      senderName: null,
+      connection: null,
+      chatId: null,
+      chatName: null,
+      messageSyncId: null,
+      insertedAt: null,
+    };
+  }
+  const connection = optionalString(forward, "sender_conn_type");
+  return {
+    hidden: false,
+    senderId: optionalString(forward, "sender_huid"),
+    senderName: null,
+    connection: connection === "rts" || connection === "cts" ? connection : null,
+    chatId: optionalString(forward, "group_chat_id"),
+    chatName: optionalString(forward, "source_name"),
+    messageSyncId: optionalString(forward, "sync_id"),
+    insertedAt: optionalString(forward, "inserted_at"),
+  };
+}
+
 function normalizePlaintextMessage(
   event: JsonRecord,
   plaintext: unknown,
@@ -104,6 +147,7 @@ function normalizePlaintextMessage(
     replyToMessageId:
       optionalString(reply, "msg_id") ?? optionalString(decoded, "reply"),
     attachmentFileId: optionalString(decoded, "link_file_id"),
+    forwardedFrom: normalizeForwardSource(decoded),
     status: "decrypted",
   };
 }
@@ -138,6 +182,7 @@ function unavailableMessage(
     body: null,
     replyToMessageId: null,
     attachmentFileId: null,
+    forwardedFrom: null,
     status,
   };
 }
@@ -374,25 +419,47 @@ export async function readDecryptedHistory(
           { signal: input.signal, connection: chat.connection },
         );
   const result = await decryptHistoryEvents(session, chat, page, keys);
-  const senderIds = [
-    ...new Set(
-      result.messages
-        .filter((message) => message.status === "decrypted")
-        .map((message) => message.senderId)
-        .filter((value): value is string => value !== null),
-    ),
-  ];
-  if (senderIds.length > 0) {
+  const senderIdsByConnection = new Map<"rts" | "cts", Set<string>>();
+  const addSenderId = (connection: "rts" | "cts", senderId: string | null) => {
+    if (!senderId) {
+      return;
+    }
+    const ids = senderIdsByConnection.get(connection) ?? new Set<string>();
+    ids.add(senderId);
+    senderIdsByConnection.set(connection, ids);
+  };
+  for (const message of result.messages) {
+    if (message.status !== "decrypted") {
+      continue;
+    }
+    addSenderId(chat.connection, message.senderId);
+    if (message.forwardedFrom && !message.forwardedFrom.hidden) {
+      addSenderId(
+        message.forwardedFrom.connection ?? chat.connection,
+        message.forwardedFrom.senderId,
+      );
+    }
+  }
+  for (const [connection, senderIds] of senderIdsByConnection) {
     try {
       const profiles = await (
         dependencies.fetchUserProfiles ?? fetchExpressUserProfiles
-      )(session, senderIds, {
+      )(session, [...senderIds], {
         signal: input.signal,
-        connection: chat.connection,
+        connection,
       });
       for (const message of result.messages) {
-        if (message.senderId) {
+        if (connection === chat.connection && message.senderId) {
           message.senderName = profiles.get(message.senderId)?.name ?? null;
+        }
+        const forwarded = message.forwardedFrom;
+        if (
+          forwarded &&
+          !forwarded.hidden &&
+          (forwarded.connection ?? chat.connection) === connection &&
+          forwarded.senderId
+        ) {
+          forwarded.senderName = profiles.get(forwarded.senderId)?.name ?? null;
         }
       }
     } catch (error) {

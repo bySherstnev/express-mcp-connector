@@ -732,6 +732,7 @@ describe("eXpress MCP server", () => {
           body: `history for ${chat.name}`,
           replyToMessageId: null,
           attachmentFileId: null,
+          forwardedFrom: null,
           status: "decrypted" as const,
         },
       ],

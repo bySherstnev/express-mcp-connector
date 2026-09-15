@@ -114,6 +114,7 @@ describe("decrypted history normalization", () => {
         body: "SYNTHETIC_TEST_MESSAGE_ONLY",
         replyToMessageId: null,
         attachmentFileId: null,
+        forwardedFrom: null,
         status: "decrypted",
       },
       {
@@ -127,6 +128,7 @@ describe("decrypted history normalization", () => {
         body: null,
         replyToMessageId: null,
         attachmentFileId: null,
+        forwardedFrom: null,
         status: "deleted",
       },
     ]);
@@ -236,6 +238,15 @@ describe("decrypted history normalization", () => {
   it("resolves the authenticated payload author through the selected directory", async () => {
     const fixture = await createSyntheticLibsodiumEventFixture({
       from: "corporate-author",
+      forward: {
+        group_chat_id: "source-chat",
+        sync_id: "source-message",
+        sender_huid: "original-author",
+        sender_conn_type: "cts",
+        inserted_at: "2026-09-15T11:29:01.492Z",
+        source_name: "Source chat",
+        stealth: null,
+      },
     });
     await sodium.ready;
     const session = {
@@ -303,6 +314,10 @@ describe("decrypted history normalization", () => {
           "corporate-author",
           { userHuid: "corporate-author", name: "Corporate Author" },
         ],
+        [
+          "original-author",
+          { userHuid: "original-author", name: "Original Author" },
+        ],
       ]),
     );
 
@@ -332,12 +347,107 @@ describe("decrypted history normalization", () => {
     expect(result.messages[0]).toMatchObject({
       senderId: "corporate-author",
       senderName: "Corporate Author",
+      forwardedFrom: {
+        hidden: false,
+        senderId: "original-author",
+        senderName: "Original Author",
+        connection: "cts",
+        chatId: "source-chat",
+        chatName: "Source chat",
+        messageSyncId: "source-message",
+        insertedAt: "2026-09-15T11:29:01.492Z",
+      },
     });
     expect(fetchUserProfiles).toHaveBeenCalledWith(
       session,
-      ["corporate-author"],
+      ["corporate-author", "original-author"],
       expect.objectContaining({ connection: "cts" }),
     );
+  });
+
+  it("does not expose or resolve hidden forwarding metadata", async () => {
+    const fixture = await createSyntheticLibsodiumEventFixture({
+      from: "visible-author",
+      forward: {
+        group_chat_id: "hidden-source-chat",
+        sync_id: "hidden-source-message",
+        sender_huid: "hidden-original-author",
+        sender_conn_type: "cts",
+        source_name: "Hidden source chat",
+        stealth: true,
+      },
+    });
+    await sodium.ready;
+    const session = {
+      rts: {
+        host: "synthetic.invalid",
+        authToken: "SYNTHETIC_TOKEN",
+        userHuid: "recipient-user",
+        serverId: "synthetic-server",
+      },
+      encryptionKeys: {
+        rts_priv_key_body: sodium.to_base64(
+          fixture.recipientPrivateKey,
+          sodium.base64_variants.ORIGINAL,
+        ),
+      },
+    } as StandaloneExpressSession;
+    const chat = {
+      connection: "rts",
+      groupChatId: fixture.groupChatId,
+      name: "Synthetic chat",
+      chatType: "group_chat",
+      encryptionKeyIds: [],
+      encryptionAlgorithm: null,
+      active: true,
+      left: false,
+      sharedHistory: true,
+      lastEventSyncId: fixture.syncId,
+      lastEventInsertedAt: null,
+      lastIgnoreMessagesAt: null,
+    } satisfies DeviceChat;
+    const key = {
+      id: "shared-transport-key",
+      body: sodium.to_base64(
+        fixture.senderPublicKey,
+        sodium.base64_variants.ORIGINAL,
+      ),
+      kind: "curve25519",
+      algo: "xsalsa20:xchacha20_aead_ietf",
+      userHuid: "transport-key-owner",
+    } satisfies ExpressPublicKey;
+
+    const result = await decryptHistoryEvents(
+      session,
+      chat,
+      {
+        generatedAt: null,
+        events: [
+          {
+            event_type: "message_new",
+            group_chat_id: fixture.groupChatId,
+            sync_id: fixture.syncId,
+            sender_key_id: key.id,
+            key: { key: fixture.encryptedEnvelope, algo: key.algo },
+            payload: fixture.encryptedPayload,
+          },
+        ],
+      },
+      new Map([[key.id, key]]),
+    );
+
+    expect(result.messages[0]?.forwardedFrom).toEqual({
+      hidden: true,
+      senderId: null,
+      senderName: null,
+      connection: null,
+      chatId: null,
+      chatName: null,
+      messageSyncId: null,
+      insertedAt: null,
+    });
+    expect(JSON.stringify(result)).not.toContain("hidden-original-author");
+    expect(JSON.stringify(result)).not.toContain("Hidden source chat");
   });
 
   it("keeps the HUID and a null name when directory resolution fails", async () => {
