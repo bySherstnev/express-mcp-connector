@@ -53,6 +53,7 @@ export async function fetchKdcPublicKeys(
     try {
       response = await fetchImpl(url, {
         method: "GET",
+        redirect: "error",
         headers: { Authorization: `Bearer ${connection.authToken}` },
         signal: options.signal,
       });

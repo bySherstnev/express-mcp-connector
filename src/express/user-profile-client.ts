@@ -111,6 +111,7 @@ export async function fetchExpressUserProfiles(
     try {
       response = await fetchImpl(new URL(path, `https://${connection.host}`), {
         method: "POST",
+        redirect: "error",
         headers: {
           Authorization: `Bearer ${connection.authToken}`,
           "Content-Type": "application/json",

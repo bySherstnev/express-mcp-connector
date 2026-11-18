@@ -142,6 +142,7 @@ async function executeJson(
     try {
       response = await fetchImpl(request.url, {
         method: request.method,
+        redirect: "error",
         headers: request.headers,
         body: request.body,
         signal,

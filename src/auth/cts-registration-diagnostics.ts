@@ -44,7 +44,11 @@ async function probe(
   signal?: AbortSignal,
 ): Promise<{ endpoint: CtsEndpointDiagnostic; payload: unknown }> {
   try {
-    const response = await fetchImpl(url, { method: "GET", signal });
+    const response = await fetchImpl(url, {
+      method: "GET",
+      redirect: "error",
+      signal,
+    });
     let payload: unknown = null;
     try {
       payload = await response.json();

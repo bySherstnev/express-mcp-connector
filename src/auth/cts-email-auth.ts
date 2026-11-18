@@ -64,6 +64,7 @@ async function signedCtsPost(
   try {
     response = await (options.fetch ?? fetch)(`https://${host}${target}`, {
       method: "POST",
+      redirect: "error",
       headers: signed.headers,
       body,
       signal: options.signal,

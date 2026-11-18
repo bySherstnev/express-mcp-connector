@@ -89,6 +89,7 @@ export async function confirmPendingCtsSession(
       `https://${session.ctsPending.host}${CTS_CONFIRM_PATH}`,
       {
         method: "POST",
+        redirect: "error",
         headers: signed.headers,
         body,
         signal: options.signal,

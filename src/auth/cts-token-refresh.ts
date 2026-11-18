@@ -52,6 +52,7 @@ export async function refreshCtsSession(
       `https://${cts.host}${CTS_REFRESH_PATH}`,
       {
         method: "POST",
+        redirect: "error",
         headers: {
           Authorization: `Bearer ${cts.accessToken}`,
           "Content-Type": "application/json",

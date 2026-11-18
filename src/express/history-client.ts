@@ -47,6 +47,7 @@ export async function fetchHistoryPage(
   try {
     response = await (options.fetch ?? fetch)(url, {
       method: request.method,
+      redirect: "error",
       headers: { Authorization: `Bearer ${connection.authToken}` },
       signal: options.signal,
     });

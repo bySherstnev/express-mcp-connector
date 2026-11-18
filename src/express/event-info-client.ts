@@ -49,6 +49,7 @@ export async function fetchEventInfo(
   try {
     response = await (options.fetch ?? fetch)(url, {
       method: "GET",
+      redirect: "error",
       headers: { Authorization: `Bearer ${connection.authToken}` },
       signal: options.signal,
     });

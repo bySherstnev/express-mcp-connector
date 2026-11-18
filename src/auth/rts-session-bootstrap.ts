@@ -79,7 +79,7 @@ export async function fetchRtsServerPublicKey(
   try {
     response = await fetchImpl(
       `https://${session.rts.host}/api/v1/kdc/start`,
-      { method: "GET", signal },
+      { method: "GET", redirect: "error", signal },
     );
   } catch {
     throw new Error("RTS KDC request failed");
@@ -146,6 +146,7 @@ export async function uploadRtsRequestIdentity(
   try {
     response = await fetchImpl(request.url, {
       method: request.method,
+      redirect: "error",
       headers: request.headers,
       body: request.body,
       signal,
